@@ -7,12 +7,22 @@
 シート内のヘッダー行(例: ご利用日 / データ処理日 / ご利用内容 / カード会員様名 / 会員番号 # / 金額 ...)を
 自動検出してから、その下の明細行だけを抽出する。ヘッダー行の位置は月によって多少ずれることがあるため、
 「ご利用日」というセルを含む行を探して基準にする。
+
+重複検出用ハッシュについて:
+  同じ日に同じ店で同じ金額の買い物を複数回することは実際に起こりうる(例: コンビニで同じ金額の
+  買い物を1日に2回、など)。単純に date+description+amount だけでハッシュを作ると、そうした
+  正当な複数取引が「同じ取引」と誤認され、DB登録時にユニーク制約違反でエラーになってしまう。
+  そのため、同じ date+description+amount の組み合わせが同一ファイル内で何回目の出現かという
+  連番(occurrence)もハッシュに含めている。これにより、
+    - 同一ファイル内の正当な重複取引 → 別々のハッシュになり、両方登録できる
+    - 同じファイルを誤って2回アップロードした場合 → 出現順が同じなので同じハッシュになり、
+      重複として正しくスキップされる
 """
 
 from __future__ import annotations
 
 import hashlib
-import re
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -34,7 +44,7 @@ class ParsedTransaction:
     date: str  # YYYY-MM-DD
     description: str
     amount: int
-    raw_hash: str  # 重複検出用のハッシュ
+    raw_hash: str  # 重複検出用のハッシュ(同一ファイル内の出現順を含む)
 
 
 class ParseError(Exception):
@@ -93,8 +103,8 @@ def _to_date(value) -> str | None:
     return None
 
 
-def make_hash(date: str, description: str, amount: int) -> str:
-    key = f"{date}|{description.strip()}|{amount}"
+def make_hash(date: str, description: str, amount: int, occurrence: int = 0) -> str:
+    key = f"{date}|{description.strip()}|{amount}|{occurrence}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
@@ -123,7 +133,7 @@ def parse_excel(file) -> list[ParsedTransaction]:
     desc_col = col_index["ご利用内容"]
     amount_col = col_index["金額"]
 
-    results: list[ParsedTransaction] = []
+    raw_rows: list[tuple[str, str, int]] = []
     for row in ws.iter_rows(min_row=header_row_idx + 1, max_row=ws.max_row, values_only=True):
         if row is None or all(v is None for v in row):
             continue
@@ -139,7 +149,17 @@ def parse_excel(file) -> list[ParsedTransaction]:
             # 日付・金額・利用内容のいずれかが欠けている行はスキップ(空行や集計行など)
             continue
 
-        h = make_hash(date_str, desc, amount)
+        raw_rows.append((date_str, desc, amount))
+
+    # 同一 (date, description, amount) の組み合わせが複数回出現する場合に備えて、
+    # 出現順(occurrence)をハッシュに含める。
+    occurrence_counts: dict[tuple[str, str, int], int] = defaultdict(int)
+    results: list[ParsedTransaction] = []
+    for date_str, desc, amount in raw_rows:
+        key = (date_str, desc, amount)
+        occ = occurrence_counts[key]
+        occurrence_counts[key] += 1
+        h = make_hash(date_str, desc, amount, occ)
         results.append(ParsedTransaction(date=date_str, description=desc, amount=amount, raw_hash=h))
 
     return results

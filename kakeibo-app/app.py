@@ -36,14 +36,9 @@ from db import (
 )
 from parser import ParseError, parse_excel
 
-# 日本語フォント(環境にあれば使う。無ければ文字化けするがグラフ自体は表示される)
+import matplotlib_fontja  # noqa: F401
+
 plt.rcParams["axes.unicode_minus"] = False
-for font_name in ["IPAexGothic", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic"]:
-    try:
-        plt.rcParams["font.family"] = font_name
-        break
-    except Exception:
-        continue
 
 st.set_page_config(page_title="家計簿アプリ", page_icon="💰", layout="wide")
 

@@ -136,7 +136,7 @@ def page_upload(session):
         if is_excluded(t.description, exclusions):
             excluded_count += 1
             continue
-        if t.hash in existing_hashes:
+        if t.raw_hash in existing_hashes:
             dup_count += 1
             continue
         cat = classify(t.description, rules)
@@ -147,7 +147,7 @@ def page_upload(session):
                 "description": t.description,
                 "amount": t.amount,
                 "category": cat,
-                "hash": t.hash,
+                "hash": t.raw_hash,
             }
         )
 
